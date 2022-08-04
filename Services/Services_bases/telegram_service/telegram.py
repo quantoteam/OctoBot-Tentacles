@@ -14,13 +14,16 @@
 #  You should have received a copy of the GNU Lesser General Public
 #  License along with this library.
 import logging
+from typing import Optional
+
 import telegram
 import telegram.ext
+import telegram.utils.request
 
+import octobot.constants as constants
 import octobot_commons.logging as bot_logging
 import octobot_services.constants as services_constants
 import octobot_services.services as services
-import octobot.constants as constants
 
 
 class TelegramService(services.AbstractService):
@@ -74,20 +77,32 @@ class TelegramService(services.AbstractService):
                    services_constants.CONFIG_TELEGRAM]
 
     async def prepare(self):
+        proxy = self.config[services_constants.CONFIG_CATEGORY_SERVICES][services_constants.CONFIG_TELEGRAM].get(
+            services_constants.CONFIG_PROXY,
+            None
+        )
+        token = self.config[services_constants.CONFIG_CATEGORY_SERVICES][services_constants.CONFIG_TELEGRAM][
+            services_constants.CONFIG_TOKEN]
         if not self.telegram_api:
             self.chat_id = self.config[services_constants.CONFIG_CATEGORY_SERVICES][services_constants.CONFIG_TELEGRAM][
                 self.CHAT_ID]
-            self.telegram_api = telegram.Bot(
-                token=self.config[services_constants.CONFIG_CATEGORY_SERVICES][services_constants.CONFIG_TELEGRAM][
-                    services_constants.CONFIG_TOKEN])
+            bot_params = {
+                'token': token,
+            }
+
+            if proxy:
+                bot_params['request'] = telegram.utils.request.Request(proxy_url=proxy)
+            self.telegram_api = telegram.Bot(**bot_params)
 
         if not self.telegram_updater:
-            self.telegram_updater = telegram.ext.Updater(
-                self.config[services_constants.CONFIG_CATEGORY_SERVICES][services_constants.CONFIG_TELEGRAM][
-                    services_constants.CONFIG_TOKEN],
-                use_context=True,
-                workers=1
-            )
+            updater_params = {
+                'token': token,
+                'use_context': True,
+                'workers': 1,
+            }
+            if proxy:
+                updater_params['request_kwargs'] = {'proxy_url': proxy}
+            self.telegram_updater = telegram.ext.Updater(**updater_params)
 
         bot_logging.set_logging_level(self.LOGGERS, logging.WARNING)
 
@@ -104,7 +119,8 @@ class TelegramService(services.AbstractService):
 
     def add_text_handler(self):
         self.telegram_updater.dispatcher.add_handler(
-            telegram.ext.MessageHandler(telegram.ext.Filters.text, self.text_handler))
+            telegram.ext.MessageHandler(telegram.ext.Filters.text, self.text_handler)
+        )
 
     def add_handlers(self, handlers):
         for handler in handlers:
@@ -158,24 +174,29 @@ class TelegramService(services.AbstractService):
         return services_constants.CONFIG_CATEGORY_SERVICES in self.config \
                and services_constants.CONFIG_TELEGRAM in self.config[services_constants.CONFIG_CATEGORY_SERVICES] \
                and self.check_required_config(
-            self.config[services_constants.CONFIG_CATEGORY_SERVICES][services_constants.CONFIG_TELEGRAM]) \
+            self.config[services_constants.CONFIG_CATEGORY_SERVICES][services_constants.CONFIG_TELEGRAM]
+        ) \
                and self.get_is_enabled(self.config)
 
-    async def send_message(self, content, markdown=False, reply_to_message_id=None) -> telegram.Message:
+    async def send_message(self, content, markdown=False, reply_to_message_id=None) -> Optional[telegram.Message]:
         kwargs = {}
         if markdown:
             kwargs[services_constants.MESSAGE_PARSE_MODE] = telegram.parsemode.ParseMode.MARKDOWN
         try:
             if content:
                 # no async call possible yet
-                return self.telegram_api.send_message(chat_id=self.chat_id, text=content,
-                                                      reply_to_message_id=reply_to_message_id, **kwargs)
+                return self.telegram_api.send_message(
+                    chat_id=self.chat_id, text=content,
+                    reply_to_message_id=reply_to_message_id, **kwargs
+                )
         except telegram.error.TimedOut:
             # retry on failing
             try:
                 # no async call possible yet
-                return self.telegram_api.send_message(chat_id=self.chat_id, text=content,
-                                                      reply_to_message_id=reply_to_message_id, **kwargs)
+                return self.telegram_api.send_message(
+                    chat_id=self.chat_id, text=content,
+                    reply_to_message_id=reply_to_message_id, **kwargs
+                )
             except telegram.error.TimedOut as e:
                 self.logger.error(f"Failed to send message : {e}")
         except telegram.error.Unauthorized as e:
