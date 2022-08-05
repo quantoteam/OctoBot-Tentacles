@@ -86,7 +86,8 @@ a.profile-overview-values {
 }
 
 .navbar.navbar-dark, footer.page-footer .footer-copyright, .progress-bar {
-    background-color: #C62828;
+    /*background-color: #C62828;*/
+    background-color: #1c2331;
 }
 
 .navbar.navbar-dark .navbar-nav .nav-item {
